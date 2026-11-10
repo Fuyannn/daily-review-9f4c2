@@ -1,0 +1,274 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <meta name="robots" content="noindex,nofollow,noarchive">
+  <meta name="theme-color" content="#f3f5f4">
+  <title>私密文档</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --ink: #17211c;
+      --muted: #6f7a74;
+      --line: #dfe6e1;
+      --paper: #fff;
+      --canvas: #f3f5f4;
+      --green: #176b4c;
+      --green-soft: #e7f4ed;
+    }
+    * { box-sizing: border-box; }
+    html, body { min-height: 100%; margin: 0; }
+    body {
+      display: grid;
+      place-items: center;
+      padding: calc(24px + env(safe-area-inset-top)) 18px calc(24px + env(safe-area-inset-bottom));
+      background:
+        radial-gradient(circle at 50% -20%, #dcefe4 0, transparent 50%),
+        var(--canvas);
+      color: var(--ink);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC",
+        "Microsoft YaHei", sans-serif;
+    }
+    .shell {
+      width: min(100%, 420px);
+      padding: 28px 22px 22px;
+      border: 1px solid var(--line);
+      border-radius: 24px;
+      background: rgba(255,255,255,.94);
+      box-shadow: 0 18px 50px rgba(20, 49, 36, .08);
+    }
+    .mark {
+      display: grid;
+      width: 50px;
+      height: 50px;
+      place-items: center;
+      margin-bottom: 20px;
+      border-radius: 15px;
+      background: var(--green);
+      color: #fff;
+      font-size: 22px;
+      font-weight: 800;
+      letter-spacing: -2px;
+    }
+    h1 {
+      margin: 0 0 8px;
+      font-size: 25px;
+      letter-spacing: -.5px;
+    }
+    .lead {
+      margin: 0 0 22px;
+      color: var(--muted);
+      font-size: 14px;
+      line-height: 1.7;
+    }
+    label {
+      display: block;
+      margin: 0 0 7px;
+      color: #425048;
+      font-size: 13px;
+      font-weight: 700;
+    }
+    input {
+      width: 100%;
+      height: 48px;
+      padding: 0 14px;
+      border: 1px solid var(--line);
+      border-radius: 13px;
+      background: #fbfcfb;
+      color: var(--ink);
+      font: inherit;
+      font-size: 16px;
+      outline: none;
+    }
+    input:focus {
+      border-color: #79a991;
+      box-shadow: 0 0 0 4px var(--green-soft);
+    }
+    button {
+      width: 100%;
+      height: 48px;
+      margin-top: 12px;
+      border: 0;
+      border-radius: 13px;
+      background: var(--green);
+      color: #fff;
+      font: inherit;
+      font-size: 15px;
+      font-weight: 750;
+    }
+    button:disabled { opacity: .55; }
+    .status {
+      min-height: 24px;
+      margin: 13px 0 0;
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.6;
+    }
+    .status.error { color: #b3343b; }
+    .progress {
+      height: 4px;
+      margin-top: 11px;
+      overflow: hidden;
+      border-radius: 999px;
+      background: #e7ece9;
+    }
+    .progress span {
+      display: block;
+      width: 0;
+      height: 100%;
+      border-radius: inherit;
+      background: var(--green);
+      transition: width .16s linear;
+    }
+    .foot {
+      margin: 18px 0 0;
+      color: #939c97;
+      font-size: 11px;
+      line-height: 1.55;
+    }
+  </style>
+</head>
+<body>
+  <main class="shell">
+    <div class="mark">私</div>
+    <h1>私密文档</h1>
+    <p class="lead">内容已加密保存。打开完整链接可直接阅读；也可以输入访问口令解锁。</p>
+    <form id="unlockForm">
+      <label for="passphrase">访问口令</label>
+      <input id="passphrase" type="password" autocomplete="current-password"
+        spellcheck="false" placeholder="请输入访问口令">
+      <button id="openButton" type="submit">打开文档</button>
+    </form>
+    <p class="status" id="status" role="status" aria-live="polite"></p>
+    <div class="progress" id="progressWrap" hidden><span id="progressBar"></span></div>
+    <p class="foot">文档包含私人记录。请勿转发完整访问链接。</p>
+  </main>
+  <script>
+    (() => {
+      "use strict";
+      const MAGIC = "NJW1";
+      const ITERATIONS = 240000;
+      const form = document.getElementById("unlockForm");
+      const input = document.getElementById("passphrase");
+      const button = document.getElementById("openButton");
+      const status = document.getElementById("status");
+      const progressWrap = document.getElementById("progressWrap");
+      const progressBar = document.getElementById("progressBar");
+      let encryptedBytes = null;
+
+      const setStatus = (message, isError = false) => {
+        status.textContent = message;
+        status.classList.toggle("error", isError);
+      };
+
+      const setProgress = (value) => {
+        progressWrap.hidden = false;
+        progressBar.style.width = `${Math.max(0, Math.min(100, value))}%`;
+      };
+
+      const loadEncrypted = async () => {
+        if (encryptedBytes) return encryptedBytes;
+        setStatus("正在安全读取加密文档…");
+        setProgress(4);
+        const response = await fetch("./content.enc", { cache: "force-cache" });
+        if (!response.ok) throw new Error(`加密文件读取失败（${response.status}）`);
+        const total = Number(response.headers.get("content-length") || 0);
+        if (!response.body || !total) {
+          encryptedBytes = new Uint8Array(await response.arrayBuffer());
+          setProgress(60);
+          return encryptedBytes;
+        }
+        const reader = response.body.getReader();
+        const chunks = [];
+        let received = 0;
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          chunks.push(value);
+          received += value.length;
+          setProgress(4 + (received / total) * 56);
+        }
+        encryptedBytes = new Uint8Array(received);
+        let offset = 0;
+        for (const chunk of chunks) {
+          encryptedBytes.set(chunk, offset);
+          offset += chunk.length;
+        }
+        return encryptedBytes;
+      };
+
+      const decrypt = async (passphrase) => {
+        button.disabled = true;
+        setStatus("正在验证并解密…");
+        try {
+          const bytes = await loadEncrypted();
+          if (bytes.length < 49) throw new Error("加密文件格式不正确");
+          if (new TextDecoder().decode(bytes.subarray(0, 4)) !== MAGIC) {
+            throw new Error("加密文件版本不正确");
+          }
+          setProgress(64);
+          const salt = bytes.slice(4, 20);
+          const iv = bytes.slice(20, 32);
+          const cipherAndTag = bytes.slice(32);
+          const material = await crypto.subtle.importKey(
+            "raw",
+            new TextEncoder().encode(passphrase),
+            "PBKDF2",
+            false,
+            ["deriveKey"]
+          );
+          const key = await crypto.subtle.deriveKey(
+            { name: "PBKDF2", salt, iterations: ITERATIONS, hash: "SHA-256" },
+            material,
+            { name: "AES-GCM", length: 256 },
+            false,
+            ["decrypt"]
+          );
+          setProgress(82);
+          const plain = await crypto.subtle.decrypt(
+            { name: "AES-GCM", iv },
+            key,
+            cipherAndTag
+          );
+          setProgress(100);
+          setStatus("解密成功，正在打开…");
+          const html = new TextDecoder("utf-8").decode(plain);
+          document.open();
+          document.write(html);
+          document.close();
+        } catch (error) {
+          console.error(error);
+          setStatus(
+            error?.name === "OperationError"
+              ? "访问口令不正确，或文件内容已损坏。"
+              : (error?.message || "无法打开文档，请稍后重试。"),
+            true
+          );
+          setProgress(0);
+          progressWrap.hidden = true;
+          button.disabled = false;
+        }
+      };
+
+      form.addEventListener("submit", (event) => {
+        event.preventDefault();
+        const passphrase = input.value.trim();
+        if (!passphrase) {
+          setStatus("请先输入访问口令。", true);
+          input.focus();
+          return;
+        }
+        decrypt(passphrase);
+      });
+
+      const fragment = new URLSearchParams(location.hash.slice(1));
+      const linkedPassphrase = fragment.get("k");
+      if (linkedPassphrase) {
+        input.value = linkedPassphrase;
+        decrypt(linkedPassphrase);
+      }
+    })();
+  </script>
+</body>
+</html>
